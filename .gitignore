@@ -1,0 +1,8 @@
+/unorganized
+
+.env
+
+hedgefundaivenv/
+
+**/__pycache__/
+**/*.py[cod]
