@@ -5,7 +5,8 @@ from app.routes.user_routes import user_bp
 
 def create_app():
     app = Flask(__name__)
-    CORS(app, resources={r"/*": {"origins": "*"}})
+    # CORS(app, resources={r"/*": {"origins": "*"}})
+    CORS(app)
 
     app.register_blueprint(chat_bp)
     app.register_blueprint(user_bp)
