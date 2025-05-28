@@ -1,6 +1,6 @@
 # 🧠 Hedge Fund AI Chat — Python Backend
 
-Python + Flask backend for the Hedge Fund AI Chat app. Uses Supabase for OAuth2 authentication. Azure SQL databases for backend.
+Python + Flask backend for the Hedge Fund AI Chat app. Uses Supabase for OAuth2 authentication. Azure SQL databases for backend. [Link to frontend code here](https://github.com/c25kenneth/hedge-fund-ai-frontend/)
 
 ---
 
