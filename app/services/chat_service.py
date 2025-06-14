@@ -13,7 +13,7 @@ from app.services.document_service import generate_and_upload_embeddings, search
 
 CHATBOT_UUID = "00000000-0000-0000-0000-000000000001"
 AGENT_ID = os.environ["AZURE_AGENT_ID"]
-ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png'}
+ALLOWED_EXTENSIONS = {'txt', 'pdf'}
 COGN_SERV_ENDPOINT = os.environ["COGN_SERV_ENDPOINT"]
 FORM_RECOG_KEY = os.environ["FORM_RECOG_KEY"]
 OPENAI_ENDPOINT = os.environ["ENDPOINT"]
@@ -140,7 +140,7 @@ def handle_document_chat(request):
         filename = secure_filename(file.filename)
 
         try:
-            file.seek(0)  # Ensure pointer is at the start
+            file.seek(0) 
             poller = document_analysis_client.begin_analyze_document(
                 model_id="prebuilt-document",
                 document=file,
