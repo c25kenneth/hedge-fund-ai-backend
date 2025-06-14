@@ -1,100 +1,118 @@
 from flask import Response, jsonify
+from openai import AzureOpenAI
 from app.db import get_connection
 from azure.identity import DefaultAzureCredential
 from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import MessageRole, BingGroundingTool
+from werkzeug.utils import secure_filename
+from azure.ai.formrecognizer import DocumentAnalysisClient
 from urllib.parse import urlencode
+from azure.core.credentials import AzureKeyCredential
 import os
 import json
+from app.services.document_service import generate_and_upload_embeddings, search_client, vector_search
 
 CHATBOT_UUID = "00000000-0000-0000-0000-000000000001"
 AGENT_ID = os.environ["AZURE_AGENT_ID"]
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png'}
+COGN_SERV_ENDPOINT = os.environ["COGN_SERV_ENDPOINT"]
+FORM_RECOG_KEY = os.environ["FORM_RECOG_KEY"]
+OPENAI_ENDPOINT = os.environ["ENDPOINT"]
+OPENAI_SUBSCRIPTION_KEY = os.environ["SUBSCRIPTION_KEY"]
+AZURE_SEARCH_ENDPOINT = os.environ["AZURE_SEARCH_ENDPOINT"]
+AZURE_SEARCH_INDEX=os.environ["AZURE_SEARCH_INDEX"]
+AZURE_SEARCH_KEY=os.environ["AZURE_SEARCH_KEY"]
 
-agents_client = AgentsClient(
-    endpoint=os.environ["PROJECT_ENDPOINT"],
-    credential=DefaultAzureCredential(),
+# SETIP API Clients Here
+client = AzureOpenAI(
+    api_version="2024-12-01-preview",
+    azure_endpoint=OPENAI_ENDPOINT,
+    api_key=OPENAI_SUBSCRIPTION_KEY,
 )
 
-bing_tool = BingGroundingTool(connection_id=os.environ["BING_CONNECTION_NAME"])
+document_analysis_client = DocumentAnalysisClient(
+    endpoint=COGN_SERV_ENDPOINT, credential=AzureKeyCredential(FORM_RECOG_KEY)
+)
 
+# Valid file?
+def allowed_file(filename):
+    return '.' in filename and \
+       filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# handle user chat no files
 def handle_chat(request):
     if not request.is_json:
         return jsonify(error="Invalid JSON"), 400
 
     data = request.get_json()
 
+    # For if there's no file attached
     def generate_and_store():
         full_response = ""
         conn = get_connection()
         cursor = conn.cursor()
 
         try:
+
+            # Add previous msesage to sql db
             cursor.execute("""
                 INSERT INTO messages (sender_uid, receiver_uid, message_text)
                 VALUES (?, ?, ?)
             """, (data["uid"], CHATBOT_UUID, data["message"]))
             conn.commit()
 
-            thread = agents_client.threads.create()
+            # Get all messeges in the convo (highkey should turn this into seperate function 💀)
+            cursor.execute("""
+                SELECT TOP 10 sender_uid, receiver_uid, message_text
+                FROM messages
+                WHERE sender_uid = ? OR receiver_uid = ?
+                ORDER BY sent_at DESC
+            """, (data["uid"], data["uid"]))
+            chat_history = cursor.fetchall()
 
-            # for msg in data.get("messageContext", []):
-            #     agents_client.messages.create(
-            #         thread_id=thread.id,
-            #         role=msg["role"],
-            #         content=msg["content"]
-            #     )
+            # Get documents uploaded (from vector db)
+            doc_context = retrieve_doc_content(user_id=data["uid"], prompt=data["message"])
             
-            agents_client.messages.create(
-                thread_id=thread.id,
-                role=MessageRole.USER,
-                content=data["message"]
+            # For previous messages + documents
+            full_chat_context = []
+
+            full_chat_context.append({
+                "role": "system",
+                "content": f"You are a helpful assistant knowledgeable on hedge funds. Answer concisely and clearly."
+            })
+
+            for row in reversed(chat_history):
+                sender_uid, receiver_uid, message_text = row
+                role = "user" if sender_uid == data["uid"] else "assistant"
+                full_chat_context.append({
+                    "role": role,
+                    "content": message_text
+                })
+            
+            full_chat_context.append({
+                "role": "user",
+                "content": data["message"] + f"You also may have some knowledge of previously uploaded documents here. Only reference if necessary and relevant: {doc_context}"
+            })
+
+            response = client.chat.completions.create(
+                stream=True,
+                messages=full_chat_context,
+                max_tokens=4096,
+                temperature=1.0,
+                top_p=1.0,
+                model="gpt-4o"
             )
 
-            run = agents_client.runs.create_and_process(thread_id=thread.id, agent_id=AGENT_ID)
-
-            if run.status == "failed":
-                run_details = agents_client.runs.get(thread_id=thread.id, run_id=run.id)
-                yield f"[Run failed: {run_details}]"
-                return
-
-            # Get final agent response
-            response_msg = agents_client.messages.get_last_message_by_role(
-                thread_id=thread.id,
-                role=MessageRole.AGENT
-            )
-
-            # Collect annotations and response text
-            annotations = []
-            if response_msg and response_msg.text_messages:
-                for block in response_msg.text_messages:
-                    text_value = block.text.value
-                    full_response += text_value
-                    for line in text_value.splitlines(keepends=True):
-                        yield line
-
-                    if block.text.annotations:
-                        for annotation in block.text.annotations:
-                            if hasattr(annotation, 'url_citation') and annotation.url_citation:
-                                annotations.append(annotation.url_citation.url)
-                            elif hasattr(annotation, 'url') and annotation.url:
-                                annotations.append(annotation.url)
-                            elif hasattr(annotation, 'file_citation') and annotation.file_citation:
-                                pass
-                            
-            bing_search_url = None
+            for update in response:
+                if update.choices:
+                    delta = update.choices[0].delta.content or ""
+                    full_response += delta
+                    yield delta
 
             cursor.execute("""
                 INSERT INTO messages (sender_uid, receiver_uid, message_text)
                 VALUES (?, ?, ?)
             """, (CHATBOT_UUID, data["uid"], full_response))
             conn.commit()
-
-            meta = {
-                "type": "metadata",
-                "bing_search_url": bing_search_url,
-                "sources": annotations
-            }
-            yield "\n[[META]]" + json.dumps(meta)
 
         except Exception as e:
             yield f"[Error: {str(e)}]"
@@ -105,3 +123,116 @@ def handle_chat(request):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
+
+
+
+# hanel user chat when document is attached
+def handle_document_chat(request):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    file = request.files['file']
+    uid = request.form.get("uid")
+    message = request.form.get("message", file.filename).strip()
+    extracted_text = ""
+
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+
+        try:
+            file.seek(0)  # Ensure pointer is at the start
+            poller = document_analysis_client.begin_analyze_document(
+                model_id="prebuilt-document",
+                document=file,
+            )
+
+            result = poller.result()
+            
+            for page in result.pages:
+                for line in page.lines:
+                    extracted_text += line.content + "\n"
+
+
+            # cursor.execute("""
+            #     INSERT INTO documents (uid, title, content, file_name)
+            #     VALUES (?, ?, ?, ?)
+            # """, (uid, filename, extracted_text[:10000], filename))
+
+            generate_and_upload_embeddings(extracted_text, uid)
+
+        except Exception as e:
+            print(f"Error processing document: {str(e)}")
+            raise e
+    
+    def generate_response():
+        full_response = ""
+        try:
+            # Store user message if present
+            if message:
+                cursor.execute("""
+                    INSERT INTO messages (sender_uid, receiver_uid, message_text, file_name)
+                    VALUES (?, ?, ?, ?)
+                """, (uid, CHATBOT_UUID, f"Uploaded: {file.filename} - {message}", file.filename))
+                conn.commit()
+            else:
+                cursor.execute("""
+                    INSERT INTO messages (sender_uid, receiver_uid, message_text, file_name)
+                    VALUES (?, ?, ?, ?)
+                """, (uid, CHATBOT_UUID, f"Uploaded: {file.filename}", file.filename))
+                conn.commit()
+
+            full_chat_context = [{
+                "role": "system",
+                "content": f"You are a helpful assistant knowledgeable on hedge funds. "
+                           f"Answer concisely and clearly. You also may have some knowledge "
+                           f"of previously uploaded documents here. Only reference if necessary "
+                           f"and relevant: {extracted_text[:1000]}"
+            }]
+
+            full_chat_context.append({
+                "role": "user",
+                "content": message or 'Give a basic rundown'
+            })
+
+            response = client.chat.completions.create(
+                stream=True,
+                messages=full_chat_context,
+                max_tokens=4096,
+                temperature=1.0,
+                top_p=1.0,
+                model="gpt-4o"
+            )
+
+            for update in response:
+                if update.choices:
+                    delta = update.choices[0].delta.content or ""
+                    full_response += delta
+                    yield delta
+
+            # Store assistant response
+            cursor.execute("""
+                INSERT INTO messages (sender_uid, receiver_uid, message_text)
+                VALUES (?, ?, ?)
+            """, (CHATBOT_UUID, uid, full_response))
+            conn.commit()
+
+        except Exception as e:
+            yield f"[Error: {str(e)}]"
+        finally:
+            conn.close()
+
+    return Response(generate_response(), mimetype='text/plain')
+
+# Call this to get prompt/information as an acc string
+def retrieve_doc_content(user_id, prompt):
+    query_embedding = client.embeddings.create(
+        input=[prompt],
+        model="text-embedding-ada-002"
+    ).data[0].embedding
+
+    results = vector_search(query_embedding, user_id)
+
+    if results:
+        return "\n".join(results)
+    else:
+        return "No documents were found. Please answer using general knowledge."

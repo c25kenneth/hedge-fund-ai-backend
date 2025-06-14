@@ -2,6 +2,7 @@
 
 .env
 
+CreateTable.py
 hedgefundaivenv/
 
 **/__pycache__/

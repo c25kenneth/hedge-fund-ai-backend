@@ -35,6 +35,7 @@ def get_user_chat(request):
                 "sender_uid": row.sender_uid,
                 "receiver_uid": row.receiver_uid,
                 "message_text": row.message_text,
+                "file_name": row.file_name if hasattr(row, 'file_name') else None,
                 "timestamp": row.sent_at.isoformat() if hasattr(row, 'sent_at') else None
             }
             for row in rows
