@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from azure.core.credentials import AzureKeyCredential
 import os
 import json
-from app.services.document_service import generate_and_upload_embeddings, search_client, vector_search
+from app.services.document_service import generate_and_upload_chunks, search_client, vector_search
 
 CHATBOT_UUID = "00000000-0000-0000-0000-000000000001"
 AGENT_ID = os.environ["AZURE_AGENT_ID"]
@@ -69,16 +69,35 @@ def handle_chat(request):
             """, (data["uid"], data["uid"]))
             chat_history = cursor.fetchall()
 
-            # Get documents uploaded (from vector db)
+            # Get documents uploaded (from search index)
             doc_context = retrieve_doc_content(user_id=data["uid"], prompt=data["message"])
             
-            # For previous messages + documents
-            full_chat_context = []
+            if doc_context:
+                references = "\n\n".join(
+                    f"[{doc['source']}]\n{doc['text']}" for doc in doc_context
+                )
+                system_doc_context = (
+                    f"You have access to the following document excerpts. "
+                    f"When referencing them, include the source name (e.g., [Source: filename.pdf]) at the end of the sentence if relevant:\n\n{references}"
+                )
+            else:
+                system_doc_context = "No relevant document excerpts were found. Answer using general knowledge."
 
-            full_chat_context.append({
-                "role": "system",
-                "content": f"You are a helpful assistant knowledgeable on hedge funds. Answer concisely and clearly."
-            })
+            # For previous messages + documents
+            full_chat_context = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful assistant knowledgeable on hedge funds. "
+                        "Answer clearly and cite the source name (e.g., [filename.pdf]) at the end of sentences where you use document content. "
+                        "If you don't use any document, you don't need to include a citation."
+                    )
+                },
+                {
+                    "role": "system",
+                    "content": system_doc_context
+                }
+            ]
 
             for row in reversed(chat_history):
                 sender_uid, receiver_uid, message_text = row
@@ -158,7 +177,7 @@ def handle_document_chat(request):
             #     VALUES (?, ?, ?, ?)
             # """, (uid, filename, extracted_text[:10000], filename))
 
-            generate_and_upload_embeddings(extracted_text, uid)
+            generate_and_upload_chunks(extracted_text, uid, filename)
 
         except Exception as e:
             print(f"Error processing document: {str(e)}")
@@ -223,16 +242,32 @@ def handle_document_chat(request):
 
     return Response(generate_response(), mimetype='text/plain')
 
-# Call this to get prompt/information as an acc string
+
 def retrieve_doc_content(user_id, prompt):
-    query_embedding = client.embeddings.create(
-        input=[prompt],
-        model="text-embedding-ada-002"
-    ).data[0].embedding
+    try:
+        results = search_client.search(
+            search_text=prompt,
+            filter=f"user_id eq '{user_id}'",
+            select=["text", "source"],
+            top=5
+        )
 
-    results = vector_search(query_embedding, user_id)
+        docs = []
+        for doc in results:
+            text = doc.get("text", "")
+            source = doc.get("source", "unknown.pdf")
+            docs.append({
+                "text": text,
+                "source": source,
+                "ref": f"[{source}]"
+            })
 
-    if results:
-        return "\n".join(results)
-    else:
-        return "No documents were found. Please answer using general knowledge."
+        return docs if docs else []
+
+    except Exception as e:
+        return [{
+            "text": f"[Keyword search error: {str(e)}]",
+            "source": "error",
+            "ref": "[error]"
+        }]
+

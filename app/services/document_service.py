@@ -29,22 +29,22 @@ search_client = SearchClient(endpoint=AZURE_SEARCH_ENDPOINT,
                              credential=AzureKeyCredential(AZURE_SEARCH_KEY))
 
 # Take string as parameter, return embedding
-def generate_and_upload_embeddings(extracted_text, user_id):
+def generate_and_upload_chunks(extracted_text, user_id, filename):
     try: 
         chunks = [extracted_text[i:i+1000] for i in range(0, len(extracted_text), 1000)]
-        response = openai_client.embeddings.create(
-            input=chunks,
-            model="text-embedding-ada-002"
-        )
+        # response = openai_client.embeddings.create(
+        #     input=chunks,
+        #     model="text-embedding-ada-002"
+        # )
 
-        embeddings = []
-        for i, chunk in enumerate(chunks):
-            embeddings.append({
-                "text": chunk,
-                "embedding": response.data[i].embedding
-            })
+        # embeddings = []
+        # for i, chunk in enumerate(chunks):
+        #     embeddings.append({
+        #         "text": chunk,
+        #         "embedding": response.data[i].embedding
+        #     })
 
-        upload_embeddings(embeddings, user_id)
+        upload_documents(chunks, user_id, filename)
 
     except Exception as e: 
         return "Error: " + str(e)
@@ -55,15 +55,16 @@ def generate_and_upload_embeddings(extracted_text, user_id):
 # generate_embeddings("A hedge fund is a type of pooled investment fund that uses various sophisticated investment strategies to achieve high returns")
 
 # upload to index
-def upload_embeddings(embeddings, user_id):
-    for idx, item in enumerate(embeddings):
-        doc = {
+def upload_documents(text_chunks, user_id, filename):
+    docs = []
+    for idx, chunk in enumerate(text_chunks):
+        docs.append({
             "id": f"{user_id}-{idx}",
             "user_id": user_id,
-            "text": item["text"],
-            "embedding": item["embedding"]
-        }
-        search_client.upload_documents(documents=[doc])
+            "text": chunk,
+            "source": filename
+        })
+        search_client.upload_documents(documents=docs)
 
 
 # Vector Search
