@@ -3,7 +3,9 @@ from azure.search.documents import SearchClient
 import os
 from openai import AzureOpenAI
 from azure.search.documents.models import VectorizedQuery
-
+from datetime import datetime
+from azure.storage.blob import BlobServiceClient, ContentSettings
+import uuid
 import json
 import requests
 
@@ -15,6 +17,12 @@ EMBEDDING_MODEL_KEY= os.environ["EMBEDDING_MODEL_KEY"]
 AZURE_SEARCH_ENDPOINT = os.environ["AZURE_SEARCH_ENDPOINT"]
 AZURE_SEARCH_INDEX=os.environ["AZURE_SEARCH_INDEX"]
 AZURE_SEARCH_KEY=os.environ["AZURE_SEARCH_KEY"]
+
+# For Azure Blob Storage
+BLOB_CONTAINER_NAME = os.environ["AZURE_BLOB_CONTAINER"]
+BLOB_ACCESS_KEY = os.environ["AZURE_BLOB_ACCESS_KEY"]
+
+blob_service_client = BlobServiceClient(account_url="https://albertprojacc.blob.core.windows.net", credential=BLOB_ACCESS_KEY)
 
 # don't be dumb remember this is for the embedding model not for chat
 openai_client = AzureOpenAI(
@@ -28,23 +36,36 @@ search_client = SearchClient(endpoint=AZURE_SEARCH_ENDPOINT,
                              index_name=AZURE_SEARCH_INDEX,
                              credential=AzureKeyCredential(AZURE_SEARCH_KEY))
 
+# Blob Functions
+def generate_unique_filename(user_id, original_filename):
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    unique_id = uuid.uuid4().hex[:6]
+    return f"{user_id}_{timestamp}_{unique_id}_{original_filename}"
+
+def upload_file_to_blob(file, unique_filename):
+    try:            
+        print("Uploading file to blob")
+        blob_client = blob_service_client.get_blob_client(
+            container=BLOB_CONTAINER_NAME, blob=unique_filename
+        )
+
+        file.seek(0)
+
+        blob_client.upload_blob(
+            file,
+            overwrite=True,
+            content_settings=ContentSettings(content_type='application/pdf')
+        )
+        print("Blob upload complete")
+        return blob_client.url
+    
+    except Exception as e:
+        return "Error: " + str(e)
+
 # Take string as parameter, return embedding
-def generate_and_upload_chunks(extracted_text, user_id, filename):
+def generate_and_upload_chunks(file, user_id, filename, pages):
     try: 
-        chunks = [extracted_text[i:i+1000] for i in range(0, len(extracted_text), 1000)]
-        # response = openai_client.embeddings.create(
-        #     input=chunks,
-        #     model="text-embedding-ada-002"
-        # )
-
-        # embeddings = []
-        # for i, chunk in enumerate(chunks):
-        #     embeddings.append({
-        #         "text": chunk,
-        #         "embedding": response.data[i].embedding
-        #     })
-
-        upload_documents(chunks, user_id, filename)
+        upload_documents(file, user_id, filename, pages)
 
     except Exception as e: 
         return "Error: " + str(e)
@@ -55,31 +76,26 @@ def generate_and_upload_chunks(extracted_text, user_id, filename):
 # generate_embeddings("A hedge fund is a type of pooled investment fund that uses various sophisticated investment strategies to achieve high returns")
 
 # upload to index
-def upload_documents(text_chunks, user_id, filename):
+def upload_documents(file, user_id, original_filename, pages):
+    print("Uploading documents to index")
+    unique_filename = generate_unique_filename(user_id, original_filename)
+    blob_url = upload_file_to_blob(file, unique_filename)
     docs = []
-    for idx, chunk in enumerate(text_chunks):
-        docs.append({
-            "id": f"{user_id}-{idx}",
-            "user_id": user_id,
-            "text": chunk,
-            "source": filename
-        })
-        search_client.upload_documents(documents=docs)
+    file.seek(0)
+    for page_num, page in enumerate(pages):
+        for line in page.lines:
+            chunk_text = line.content
+            polygon = [{"x": p.x, "y": p.y} for p in line.polygon]
 
-
-# Vector Search
-def vector_search(query_embedding, user_id, top_k=5):
-    vector_query = VectorizedQuery(
-        vector=query_embedding,
-        k_nearest_neighbors=top_k,
-        fields="embedding"
-    )
-
-    results = search_client.search(
-        search_text="", 
-        vector_queries=[vector_query],
-        filter=f"user_id eq '{user_id}'",
-        select=["text"]
-    )
-
-    return [doc["text"] for doc in results]
+            docs.append({
+                "id": f"{user_id}-{uuid.uuid4().hex[:8]}",
+                "user_id": user_id,
+                "text": chunk_text,
+                "source": original_filename,
+                "blob_url": blob_url,
+                "unique_filename": unique_filename,
+                "page_number": [page_num + 1],
+                "bounding_polygon": polygon
+            })
+    
+    search_client.upload_documents(documents=docs)

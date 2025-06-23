@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from azure.core.credentials import AzureKeyCredential
 import os
 import json
-from app.services.document_service import generate_and_upload_chunks, search_client, vector_search
+from app.services.document_service import generate_and_upload_chunks, search_client
 
 CHATBOT_UUID = "00000000-0000-0000-0000-000000000001"
 AGENT_ID = os.environ["AZURE_AGENT_ID"]
@@ -77,8 +77,9 @@ def handle_chat(request):
                     f"[{doc['source']}]\n{doc['text']}" for doc in doc_context
                 )
                 system_doc_context = (
-                    f"You have access to the following document excerpts. "
-                    f"When referencing them, include the source name (e.g., [Source: filename.pdf]) at the end of the sentence if relevant:\n\n{references}"
+                    "You have access to the following document excerpts. "
+                    "If you use content from them, cite the source by placing the file name in brackets at the end of the relevant sentence — like this: [strategy.pdf].\n\n"
+                    f"{references}"
                 )
             else:
                 system_doc_context = "No relevant document excerpts were found. Answer using general knowledge."
@@ -86,12 +87,14 @@ def handle_chat(request):
             # For previous messages + documents
             full_chat_context = [
                 {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant knowledgeable on hedge funds. "
-                        "Answer clearly and cite the source name (e.g., [filename.pdf]) at the end of sentences where you use document content. "
-                        "If you don't use any document, you don't need to include a citation."
-                    )
+                "role": "system",
+                "content": (
+                    "You have access to document excerpts provided below. "
+                    "If you include any information from these excerpts in your response, "
+                    "you must cite the source using the format [filename.pdf] at the END OF THAT sentence. Make sure the sources are BOLDED"
+                    "Do not group multiple citations at the end of a paragraph — attach them DIRECTLY TO THE SENTENCE they relate to."
+                    "If you do not use any document information, you do not need to cite anything."
+                )
                 },
                 {
                     "role": "system",
@@ -109,7 +112,7 @@ def handle_chat(request):
             
             full_chat_context.append({
                 "role": "user",
-                "content": data["message"] + f"You also may have some knowledge of previously uploaded documents here. Only reference if necessary and relevant: {doc_context}"
+                "content": data["message"]
             })
 
             response = client.chat.completions.create(
@@ -166,18 +169,12 @@ def handle_document_chat(request):
             )
 
             result = poller.result()
-            
+
             for page in result.pages:
                 for line in page.lines:
                     extracted_text += line.content + "\n"
 
-
-            # cursor.execute("""
-            #     INSERT INTO documents (uid, title, content, file_name)
-            #     VALUES (?, ?, ?, ?)
-            # """, (uid, filename, extracted_text[:10000], filename))
-
-            generate_and_upload_chunks(extracted_text, uid, filename)
+            generate_and_upload_chunks(file, uid, filename, result.pages)
 
         except Exception as e:
             print(f"Error processing document: {str(e)}")
@@ -248,7 +245,7 @@ def retrieve_doc_content(user_id, prompt):
         results = search_client.search(
             search_text=prompt,
             filter=f"user_id eq '{user_id}'",
-            select=["text", "source"],
+            select=["text", "source", "blob_url", "page_number", "bounding_polygon"],
             top=5
         )
 
@@ -256,10 +253,15 @@ def retrieve_doc_content(user_id, prompt):
         for doc in results:
             text = doc.get("text", "")
             source = doc.get("source", "unknown.pdf")
+            filename = source.split("/")[-1]
+
             docs.append({
                 "text": text,
-                "source": source,
-                "ref": f"[{source}]"
+                "source": filename,
+                "ref": f"[{filename}]",
+                "blob_url": doc.get("blob_url"),
+                "page_number": doc.get("page_number"),
+                "bounding_polygon": doc.get("bounding_polygon")
             })
 
         return docs if docs else []
@@ -268,6 +270,8 @@ def retrieve_doc_content(user_id, prompt):
         return [{
             "text": f"[Keyword search error: {str(e)}]",
             "source": "error",
-            "ref": "[error]"
+            "ref": "[error]",
+            "blob_url": None,
+            "page_number": None,
+            "bounding_polygon": None
         }]
-
