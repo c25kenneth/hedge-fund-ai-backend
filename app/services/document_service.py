@@ -82,20 +82,32 @@ def upload_documents(file, user_id, original_filename, pages):
     blob_url = upload_file_to_blob(file, unique_filename)
     docs = []
     file.seek(0)
-    for page_num, page in enumerate(pages):
-        for line in page.lines:
-            chunk_text = line.content
-            polygon = [{"x": p.x, "y": p.y} for p in line.polygon]
+    try:
+        for page_num, page in enumerate(pages):
+            page_width = getattr(page, "width", None)
+            page_height = getattr(page, "height", None)
+            for line in page.lines:
+                chunk_text = line.content
+                polygon = [coord for point in line.polygon for coord in (point.x, point.y)]
 
-            docs.append({
-                "id": f"{user_id}-{uuid.uuid4().hex[:8]}",
-                "user_id": user_id,
-                "text": chunk_text,
-                "source": original_filename,
-                "blob_url": blob_url,
-                "unique_filename": unique_filename,
-                "page_number": [page_num + 1],
-                "bounding_polygon": polygon
-            })
+                docs.append({
+                    "id": f"{user_id}-{uuid.uuid4().hex[:8]}",
+                    "user_id": user_id,
+                    "text": chunk_text,
+                    "source": original_filename,
+                    "blob_url": blob_url,
+                    "unique_filename": unique_filename,
+                    "page_number": [page_num + 1],
+                    "bounding_polygon": polygon,
+                    "page_width": page_width,
+                    "page_height": page_height
+                })
     
-    search_client.upload_documents(documents=docs)
+                result = search_client.upload_documents(documents=docs)
+                for r in result:
+                    if not r.succeeded:
+                        print(f"[❌] Failed to upload doc ID {r.key}: {r.error_message}")
+                    else:
+                        print(f"[✅] Uploaded doc ID: {r.key}")
+    except Exception as e:
+        print(str(e))

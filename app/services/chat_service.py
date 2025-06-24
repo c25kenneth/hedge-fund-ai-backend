@@ -245,7 +245,7 @@ def retrieve_doc_content(user_id, prompt):
         results = search_client.search(
             search_text=prompt,
             filter=f"user_id eq '{user_id}'",
-            select=["text", "source", "blob_url", "page_number", "bounding_polygon"],
+            select=["text", "source", "blob_url", "page_number", "bounding_polygon", "page_width", "page_height"],
             top=5
         )
 
@@ -261,9 +261,11 @@ def retrieve_doc_content(user_id, prompt):
                 "ref": f"[{filename}]",
                 "blob_url": doc.get("blob_url"),
                 "page_number": doc.get("page_number"),
-                "bounding_polygon": doc.get("bounding_polygon")
+                "bounding_polygon": doc.get("bounding_polygon"),
+                "page_width": doc.get("page_width"),
+                "page_height": doc.get("page_height")
             })
-
+        print(docs)
         return docs if docs else []
 
     except Exception as e:
@@ -273,5 +275,7 @@ def retrieve_doc_content(user_id, prompt):
             "ref": "[error]",
             "blob_url": None,
             "page_number": None,
-            "bounding_polygon": None
+            "bounding_polygon": None,
+            "page_width": None,
+            "page_height": None,
         }]
