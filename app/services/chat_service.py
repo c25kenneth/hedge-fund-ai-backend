@@ -74,11 +74,11 @@ def handle_chat(request):
             
             if doc_context:
                 references = "\n\n".join(
-                    f"[{doc['source']}]\n{doc['text']}" for doc in doc_context
+                    f"[{doc['source']}]({doc['blob_url']})\n{doc['text']}" for doc in doc_context
                 )
                 system_doc_context = (
                     "You have access to the following document excerpts. "
-                    "If you use content from them, cite the source by placing the file name in brackets at the end of the relevant sentence — like this: [strategy.pdf].\n\n"
+                    "you must cite the source using the format **[filename.pdf](blob_url)** at the end of that sentence .\n\n"
                     f"{references}"
                 )
             else:
@@ -91,8 +91,8 @@ def handle_chat(request):
                 "content": (
                     "You have access to document excerpts provided below. "
                     "If you include any information from these excerpts in your response, "
-                    "you must cite the source using the format [filename.pdf] at the END OF THAT sentence. Make sure the sources are BOLDED"
-                    "Do not group multiple citations at the end of a paragraph — attach them DIRECTLY TO THE SENTENCE they relate to."
+                    "you must cite the source using the format **[filename.pdf](blob_url)** at the end of that sentence. "
+                    "Do not group multiple citations at the end of a paragraph — attach them directly to the sentence they relate to. "
                     "If you do not use any document information, you do not need to cite anything."
                 )
                 },
