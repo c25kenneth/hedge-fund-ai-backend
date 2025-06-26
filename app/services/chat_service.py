@@ -17,7 +17,6 @@ import cv2
 import numpy as np
 
 CHATBOT_UUID = "00000000-0000-0000-0000-000000000001"
-AGENT_ID = os.environ["AZURE_AGENT_ID"]
 ALLOWED_EXTENSIONS = {'txt', 'pdf'}
 COGN_SERV_ENDPOINT = os.environ["COGN_SERV_ENDPOINT"]
 FORM_RECOG_KEY = os.environ["FORM_RECOG_KEY"]
