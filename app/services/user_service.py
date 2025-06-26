@@ -1,5 +1,6 @@
 from flask import request, jsonify
 from app.db import get_connection
+import json 
 
 def create_user(request):
     try:
@@ -36,7 +37,8 @@ def get_user_chat(request):
                 "receiver_uid": row.receiver_uid,
                 "message_text": row.message_text,
                 "file_name": row.file_name if hasattr(row, 'file_name') else None,
-                "timestamp": row.sent_at.isoformat() if hasattr(row, 'sent_at') else None
+                "timestamp": row.sent_at.isoformat() if hasattr(row, 'sent_at') else None, 
+                "citations": json.loads(row.citations) if row.citations else [],
             }
             for row in rows
         ]

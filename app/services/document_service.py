@@ -21,8 +21,8 @@ AZURE_SEARCH_KEY=os.environ["AZURE_SEARCH_KEY"]
 # For Azure Blob Storage
 BLOB_CONTAINER_NAME = os.environ["AZURE_BLOB_CONTAINER"]
 BLOB_ACCESS_KEY = os.environ["AZURE_BLOB_ACCESS_KEY"]
-
-blob_service_client = BlobServiceClient(account_url="https://albertprojacc.blob.core.windows.net", credential=BLOB_ACCESS_KEY)
+BLOB_ACCOUNT_URL = os.environ["AZURE_BLOB_ACCOUNT_URL"]
+blob_service_client = BlobServiceClient(account_url=BLOB_ACCOUNT_URL, credential=BLOB_ACCESS_KEY)
 
 # don't be dumb remember this is for the embedding model not for chat
 openai_client = AzureOpenAI(
