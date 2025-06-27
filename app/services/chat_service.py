@@ -332,7 +332,6 @@ def preview_pdf_page():
             if 'path' in locals() and path and os.path.exists(path):
                 os.remove(path)
 
-
 def retrieve_doc_content(user_id, prompt, top_k=3):
     """Improved document retrieval with better filtering"""
     try:
